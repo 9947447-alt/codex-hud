@@ -1,3 +1,15 @@
 .build/
 .DS_Store
 .agent-guardrails/
+.swiftpm/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+
+# Local logs, secrets, and captures
+*.log
+.env
+.env.*
+*.pem
+*.p12
+*.dump

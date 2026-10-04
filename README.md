@@ -17,7 +17,7 @@ CodexHUD 是一个 macOS 原生悬浮 HUD，用于旁观 Codex Desktop 当前任
 - Swift 6.0 或更高版本的工具链（Xcode 或 Command Line Tools）。
 - 在同一 macOS 用户下运行 Codex Desktop，并能读取其默认 `~/.codex` 本地数据与 IPC socket。
 
-当前明确支持 **Codex Desktop**。S1 验证环境为 `/Applications/ChatGPT.app` 26.930.31730（build 12947），内置 Codex 0.160.0；其他版本的兼容性未经保证。
+当前明确支持 **Codex Desktop**。已验证环境为 `/Applications/ChatGPT.app` 26.930.31730（build 12947），内置 Codex 0.160.0；其他版本的兼容性未经保证。
 
 当前不支持 Terminal Codex CLI、作为独立目标的 VS Code extension、Windows 或 Linux。
 
@@ -79,3 +79,9 @@ Desktop IPC 的 accepted visible text → 本地离线 `o200k_base` tokenizer �
 - watcher 和 child ledger 有有界容量：每个 watcher/root 最多 64 个 task watcher 加 4 个 metadata/partial watcher；child ledger 最多 4096 项。超出容量可能无法持续追尾或保留全部子任务用量。
 
 协议、计数边界、资源来源与容量细节见 [docs/TELEMETRY.md](docs/TELEMETRY.md)。
+
+## License
+
+本仓库中的 CodexHUD 代码以 [MIT License](LICENSE) 发布。
+
+随包的 `o200k_base` tokenizer ranks 保留上游许可声明：`Sources/CodexHUDCore/Resources/o200k_base.LICENSE`。项目许可不替换该声明。
