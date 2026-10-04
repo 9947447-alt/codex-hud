@@ -58,15 +58,56 @@ private struct LiveConversation {
     var turns: [String: LiveTurn]
 }
 
-private struct LiveTurn {
+struct LiveTurn {
     var entityKey: String
     var turnID: String
     var status: DesktopTurnStatus
     var startedAtMilliseconds: Int?
     var items: [LiveItem]
+
+    mutating func applyItemOperation(
+        _ operation: DesktopStateOperation,
+        itemIndex: Int,
+        entityIndex: Int,
+        newlyCreatedAgentItemIDs: inout Set<String>,
+        unsupportedStatePatch: inout Bool
+    ) -> Bool {
+        guard itemIndex >= 0 else { return false }
+        let path = operation.path
+        if path.count == entityIndex + 4 {
+            if operation.operation == "remove" {
+                if items.indices.contains(itemIndex) { items.remove(at: itemIndex) }
+            } else if let item = operation.itemValue {
+                let liveItem = LiveItem(id: item.id, kind: item.kind, textUTF16Length: item.textUTF16Length, commandStatus: item.commandStatus)
+                if operation.operation == "add" {
+                    items.insert(liveItem, at: min(itemIndex, items.count))
+                } else if items.indices.contains(itemIndex) {
+                    items[itemIndex] = liveItem
+                }
+                if item.kind == .agentMessage { newlyCreatedAgentItemIDs.insert(item.id) }
+            } else {
+                unsupportedStatePatch = true
+            }
+        } else if path.count == entityIndex + 5, path.last == "text",
+                  items.indices.contains(itemIndex) {
+            items[itemIndex].textUTF16Length = operation.textValue?.utf16.count ?? 0
+        } else if path.count == entityIndex + 5, path.last == "status",
+                  items.indices.contains(itemIndex) {
+            items[itemIndex].commandStatus = operation.statusValue == "inProgress" ? .inProgress
+                : operation.statusValue == "completed" ? .completed : .other
+            if items[itemIndex].commandStatus == .other { unsupportedStatePatch = true }
+        } else if path.count == entityIndex + 4 {
+            unsupportedStatePatch = true
+        } else if !items.indices.contains(itemIndex) {
+            unsupportedStatePatch = true
+        } else {
+            // Ignore unrelated item metadata such as phase and delivery.
+        }
+        return true
+    }
 }
 
-private struct LiveItem {
+struct LiveItem: Equatable {
     var id: String
     var kind: DesktopTurnItemKind
     var textUTF16Length: Int
@@ -329,35 +370,13 @@ private final class HUDRuntimeCoordinator: @unchecked Sendable {
                 } else if path.count >= entityIndex + 4, path[entityIndex + 2] == "items",
                           let itemIndex = Int(path[entityIndex + 3]),
                           var turn = conversation.turns.values.first(where: { $0.entityKey == entityKey }) {
-                    if path.count == entityIndex + 4 {
-                        if operation.operation == "remove" {
-                            if turn.items.indices.contains(itemIndex) { turn.items.remove(at: itemIndex) }
-                        } else if let item = operation.itemValue {
-                            let liveItem = scrub(item)
-                            if operation.operation == "add" {
-                                turn.items.insert(liveItem, at: min(itemIndex, turn.items.count))
-                            } else if turn.items.indices.contains(itemIndex) {
-                                turn.items[itemIndex] = liveItem
-                            }
-                            if item.kind == .agentMessage { newlyCreatedAgentItemIDs.insert(item.id) }
-                        } else {
-                            unsupportedStatePatch = true
-                        }
-                    } else if path.count == entityIndex + 5, path.last == "text",
-                              turn.items.indices.contains(itemIndex) {
-                        turn.items[itemIndex].textUTF16Length = operation.textValue?.utf16.count ?? 0
-                    } else if path.count == entityIndex + 5, path.last == "status",
-                              turn.items.indices.contains(itemIndex) {
-                        turn.items[itemIndex].commandStatus = operation.statusValue == "inProgress" ? .inProgress
-                            : operation.statusValue == "completed" ? .completed : .other
-                        if turn.items[itemIndex].commandStatus == .other { unsupportedStatePatch = true }
-                    } else if path.count == entityIndex + 4 {
-                        unsupportedStatePatch = true
-                    } else if !turn.items.indices.contains(itemIndex) {
-                        unsupportedStatePatch = true
-                    } else {
-                        // Ignore unrelated item metadata such as phase and delivery.
-                    }
+                    guard turn.applyItemOperation(
+                        operation,
+                        itemIndex: itemIndex,
+                        entityIndex: entityIndex,
+                        newlyCreatedAgentItemIDs: &newlyCreatedAgentItemIDs,
+                        unsupportedStatePatch: &unsupportedStatePatch
+                    ) else { continue }
                     conversation.turns[turn.entityKey] = turn
                 } else {
                     if path.count == entityIndex + 2 {
