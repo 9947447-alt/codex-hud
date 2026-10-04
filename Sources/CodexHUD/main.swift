@@ -65,6 +65,19 @@ struct LiveTurn {
     var startedAtMilliseconds: Int?
     var items: [LiveItem]
 
+    func matchingItemSnapshotText(operations: [DesktopStateOperation], itemID: String) -> String? {
+        operations.first(where: { operation in
+            guard operation.itemValue?.id == itemID else { return false }
+            let path = operation.path
+            if let entityIndex = path.firstIndex(of: "entitiesByKey"),
+               path.count >= entityIndex + 4,
+               path[entityIndex + 2] == "items" {
+                guard let itemIndex = Int(path[entityIndex + 3]), itemIndex >= 0 else { return false }
+            }
+            return true
+        })?.itemValue?.text
+    }
+
     mutating func applyItemOperation(
         _ operation: DesktopStateOperation,
         itemIndex: Int,
@@ -421,7 +434,7 @@ private final class HUDRuntimeCoordinator: @unchecked Sendable {
                 operations: patch.operations,
                 entityKey: selectedLiveTurn.entityKey,
                 itemIndex: selectedLiveTurn.items.firstIndex(where: { $0.id == newItem.id })
-            ) ?? patch.operations.first(where: { $0.itemValue?.id == newItem.id })?.itemValue?.text ?? ""
+            ) ?? selectedLiveTurn.matchingItemSnapshotText(operations: patch.operations, itemID: newItem.id) ?? ""
             speedMeter?.establishBaseline(
                 item: identity(patch.threadID, selectedLiveTurn.entityKey, newItem.id),
                 fullText: fullText,

@@ -82,6 +82,47 @@ final class LiveTurnItemTests: XCTestCase {
         XCTAssertFalse(unsupported)
     }
 
+    func testRejectedNegativeItemCannotSupplySameIDBaselineForValidItem() throws {
+        let itemID = "agent-fixture"
+        let valid = try decodeOperation(op: "add", index: 0, value: [
+            "id": itemID, "type": "agentMessage", "text": "OK",
+        ])
+        for (op, index) in [("add", -1), ("replace", -1), ("add", Int.min), ("replace", Int.min)] {
+            let invalid = try decodeOperation(op: op, index: index, value: [
+                "id": itemID, "type": "agentMessage", "text": "INVALID BASELINE",
+            ])
+            let operations = [invalid, valid]
+            var turn = fixtureTurn()
+            var newIDs: Set<String> = []
+            var unsupported = false
+            for operation in operations {
+                let index = try XCTUnwrap(Int(operation.path[5]))
+                _ = turn.applyItemOperation(
+                    operation, itemIndex: index, entityIndex: 2,
+                    newlyCreatedAgentItemIDs: &newIDs, unsupportedStatePatch: &unsupported
+                )
+            }
+            XCTAssertEqual(turn.items.first?.id, itemID)
+            XCTAssertEqual(turn.items.first?.textUTF16Length, 2)
+            XCTAssertEqual(newIDs, [itemID])
+            XCTAssertFalse(unsupported)
+
+            XCTAssertNil(turn.matchingItemSnapshotText(operations: [invalid], itemID: itemID))
+            XCTAssertEqual(turn.matchingItemSnapshotText(operations: [valid], itemID: itemID), "OK")
+            let baseline = try XCTUnwrap(turn.matchingItemSnapshotText(operations: operations, itemID: itemID))
+            XCTAssertEqual(baseline, "OK")
+            let identity = LiveItemIdentity(hostID: "local", threadID: "thread-fixture", entityKey: "entity-fixture", itemID: itemID)
+            var meter = OutputSpeedMeter(tokenCounter: FixtureCharacterCounter())
+            meter.establishBaseline(item: identity, fullText: baseline, revision: 2, uptime: 1)
+            meter.accept(
+                revision: 3, item: identity, kind: .agentMessage,
+                edit: LiveTextEdit(atUTF16: 2, deleteCountUTF16: 0, insert: "!"),
+                updatedText: "OK!", uptime: 2, isContinuous: true
+            )
+            XCTAssertEqual(meter.speed(at: 2), 1)
+        }
+    }
+
     private func fixtureTurn() -> LiveTurn {
         LiveTurn(
             entityKey: "entity-fixture", turnID: "turn-fixture", status: .inProgress,
@@ -109,4 +150,8 @@ final class LiveTurnItemTests: XCTestCase {
         }
         return try XCTUnwrap(batch.operations.first)
     }
+}
+
+private struct FixtureCharacterCounter: TokenCounter {
+    func countTokens(in text: String) -> Int { text.utf16.count }
 }
