@@ -25,8 +25,8 @@ private final class HUDApplicationDelegate: NSObject, NSApplicationDelegate {
             self?.panel.update(
                 modelText: display.model,
                 status: display.status,
-                speedText: display.speed,
-                taskText: display.task
+                averageLine: display.averageLine,
+                taskLine: display.taskLine
             )
         }
         coordinator?.start()
@@ -40,8 +40,8 @@ private final class HUDApplicationDelegate: NSObject, NSApplicationDelegate {
 private struct HUDDisplay: Equatable, Sendable {
     let model: String
     let status: HUDPresentationState
-    let speed: String
-    let task: String
+    let averageLine: String
+    let taskLine: String
 }
 
 private struct ThreadTelemetryState {
@@ -222,15 +222,24 @@ private final class HUDRuntimeCoordinator: @unchecked Sendable {
             if case let .sessionMetadata(metadata) = rolloutEvent {
                 state.metadata = metadata
             }
+            if case let .turnContext(turnID, model, _) = rolloutEvent, let model {
+                childUsage.assignModel(threadID: threadID, turnID: turnID, model: model)
+            }
             if case let .usage(record) = rolloutEvent {
                 let ownedRecord = TokenUsageRecord(
                     threadID: record.threadID ?? threadID,
                     turnID: record.turnID,
                     rootTurnID: record.rootTurnID,
                     responseID: record.responseID,
-                    totalTokens: record.totalTokens
+                    totalTokens: record.totalTokens,
+                    turnUsage: record.turnUsage,
+                    responseUsage: record.responseUsage,
+                    settledAtMilliseconds: record.settledAtMilliseconds
                 )
                 childUsage.consume(ownedRecord)
+                if state.usage.snapshot.turnID == record.turnID, let model = state.usage.snapshot.model {
+                    childUsage.assignModel(threadID: threadID, turnID: record.turnID, model: model)
+                }
             }
             state.usage.consume(rolloutEvent)
             threads[threadID] = state
@@ -247,14 +256,26 @@ private final class HUDRuntimeCoordinator: @unchecked Sendable {
     }
 
     private func handleArchivedEvent(_ event: RolloutWatchEvent) {
-        guard case let .event(threadID, .usage(record)) = event else { return }
-        childUsage.consume(TokenUsageRecord(
-            threadID: record.threadID ?? threadID,
-            turnID: record.turnID,
-            rootTurnID: record.rootTurnID,
-            responseID: record.responseID,
-            totalTokens: record.totalTokens
-        ))
+        guard case let .event(threadID, rolloutEvent) = event else { return }
+        switch rolloutEvent {
+        case let .turnContext(turnID, model, _):
+            if let model {
+                childUsage.assignModel(threadID: threadID, turnID: turnID, model: model)
+            }
+        case let .usage(record):
+            childUsage.consume(TokenUsageRecord(
+                threadID: record.threadID ?? threadID,
+                turnID: record.turnID,
+                rootTurnID: record.rootTurnID,
+                responseID: record.responseID,
+                totalTokens: record.totalTokens,
+                turnUsage: record.turnUsage,
+                responseUsage: record.responseUsage,
+                settledAtMilliseconds: record.settledAtMilliseconds
+            ))
+        default:
+            break
+        }
     }
 
     private func handleConnectionEvent(_ event: DesktopConnectionEvent) {
@@ -515,14 +536,22 @@ private final class HUDRuntimeCoordinator: @unchecked Sendable {
             makeCandidate(threadID: reference.threadID, state: threads[reference.threadID], requireActive: true)
         } ?? newestDisplayCandidate()
         guard let candidate, let state = threads[candidate.threadID] else {
-            publish(HUDDisplay(model: "", status: connected ? .idle : .disconnected, speed: "— tok/s", task: "— tok"))
+            publish(HUDDisplay(
+                model: "",
+                status: connected ? .idle : .disconnected,
+                averageLine: TaskMetricLineFormatter.average(nil),
+                taskLine: TaskMetricLineFormatter.task(totalTokens: -1, apiEquivalentUSD: nil)
+            ))
             return
         }
 
         let usage = state.usage.snapshot
-        let childTotal = childUsage.totalTokens(rootTurnID: candidate.turnID, excludingThreadID: candidate.threadID)
-        let (taskTokens, overflow) = usage.totalTokens.addingReportingOverflow(childTotal)
-        let total = overflow ? Int.max : taskTokens
+        let child = childUsage.summary(rootTurnID: candidate.turnID, excludingThreadID: candidate.threadID)
+        let metrics = CurrentTaskAccountant.metrics(
+            startedAtMilliseconds: usage.startedAtMilliseconds,
+            parent: usage,
+            child: child
+        )
         let model = usage.model
             ?? state.live?.model
             ?? ""
@@ -531,7 +560,6 @@ private final class HUDRuntimeCoordinator: @unchecked Sendable {
         let selectedLiveTurn = state.live?.turns.values.first(where: { $0.turnID == candidate.turnID })
         let tool = selectedLiveTurn.map(liveToolState)
         let uptime = monotonicUptime()
-        let speed = speedMeter?.speed(at: uptime)
 
         let status: HUDPresentationState
         if !connected {
@@ -552,21 +580,22 @@ private final class HUDRuntimeCoordinator: @unchecked Sendable {
             status = .idle
         }
 
-        let speedText = status == .generating
-            ? speed.map { String(format: "≈%.1f tok/s", locale: Locale(identifier: "en_US_POSIX"), $0) } ?? "— tok/s"
-            : "— tok/s"
         let display = HUDDisplay(
             model: modelText,
             status: status,
-            speed: speedText,
-            task: TaskTokenFormatter.string(total)
+            averageLine: TaskMetricLineFormatter.average(metrics.averageOutputTokensPerSecond),
+            taskLine: TaskMetricLineFormatter.task(
+                totalTokens: metrics.totalTokens,
+                apiEquivalentUSD: metrics.apiEquivalentUSD
+            )
         )
         diagnose(
             display: display,
             candidate: candidate,
             parentTokens: usage.totalTokens,
-            childTokens: childTotal,
-            outputRate: status == .generating ? speed : nil
+            childTokens: child.totalTokens,
+            average: metrics.averageOutputTokensPerSecond,
+            apiEquivalent: metrics.apiEquivalentUSD
         )
         publish(display)
     }
@@ -667,14 +696,16 @@ private final class HUDRuntimeCoordinator: @unchecked Sendable {
         candidate: ActiveTurnCandidate,
         parentTokens: Int,
         childTokens: Int,
-        outputRate: Double?
+        average: Double?,
+        apiEquivalent: Decimal?
     ) {
         guard diagnosticsEnabled else { return }
-        let rate = outputRate.map { String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), $0) } ?? "none"
-        let signature = "\(display.status)|\(candidate.threadID)|\(candidate.turnID)|\(parentTokens)|\(childTokens)|\(rate)|\(outputPatchCount)|\(streamEventCount)|\(lastRevisionSummary)|\(revisionGapCount)"
+        let averageText = average.map { String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), $0) } ?? "none"
+        let apiText = apiEquivalent.map { NSDecimalNumber(decimal: $0).stringValue } ?? "none"
+        let signature = "\(display.status)|\(candidate.threadID)|\(candidate.turnID)|\(parentTokens)|\(childTokens)|\(averageText)|\(apiText)|\(outputPatchCount)|\(streamEventCount)|\(lastRevisionSummary)|\(revisionGapCount)"
         guard signature != lastDiagnostic else { return }
         lastDiagnostic = signature
-        log("uptime=\(monotonicUptime()) state=\(display.status) thread=\(candidate.threadID) turn=\(candidate.turnID) parent_tokens=\(parentTokens) child_tokens=\(childTokens) task=\(display.task) rate=\(rate) patches=\(outputPatchCount) events=\(streamEventCount) revision=\(lastRevisionSummary) revision_gaps=\(revisionGapCount)")
+        log("uptime=\(monotonicUptime()) state=\(display.status) thread=\(candidate.threadID) turn=\(candidate.turnID) parent_tokens=\(parentTokens) child_tokens=\(childTokens) task=\(display.taskLine) avg=\(averageText) api=\(apiText) patches=\(outputPatchCount) events=\(streamEventCount) revision=\(lastRevisionSummary) revision_gaps=\(revisionGapCount)")
     }
 
     private func log(_ line: String) {

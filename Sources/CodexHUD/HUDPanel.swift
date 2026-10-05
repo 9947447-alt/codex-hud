@@ -22,9 +22,8 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
     private let effectView = HUDBackdropView()
     private let statusDot = HUDStatusDot()
     private let modelLabel = NSTextField(labelWithString: "")
-    private let speedLabel = NSTextField(labelWithString: "")
-    private let taskLabel = NSTextField(labelWithString: "TASK")
-    private let taskValueLabel = NSTextField(labelWithString: "")
+    private let averageLabel = NSTextField(labelWithString: "")
+    private let taskLineLabel = NSTextField(labelWithString: "")
 
     override init() {
         let initialFrame = Self.initialFrame()
@@ -39,18 +38,18 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
 
         configurePanel()
         configureContent()
-        update(modelText: "", status: .idle, speedText: "— tok/s", taskText: "— tok")
+        update(modelText: "", status: .idle, averageLine: "AVG   — tok/s", taskLine: "TASK  — · API≈—")
     }
 
     func show() {
         panel.orderFrontRegardless()
     }
 
-    func update(modelText: String, status: HUDPresentationState, speedText: String, taskText: String) {
+    func update(modelText: String, status: HUDPresentationState, averageLine: String, taskLine: String) {
         let model = modelText.trimmingCharacters(in: .whitespacesAndNewlines)
         self.modelLabel.stringValue = model.isEmpty ? Self.fallbackTitle(for: status) : model
-        self.speedLabel.stringValue = Self.secondaryLine(for: status, speedText: speedText)
-        self.taskValueLabel.stringValue = taskText.isEmpty ? "— tok" : taskText
+        self.averageLabel.stringValue = averageLine.isEmpty ? "AVG   — tok/s" : averageLine
+        self.taskLineLabel.stringValue = taskLine.isEmpty ? "TASK  — · API≈—" : taskLine
         self.statusDot.state = status
     }
 
@@ -95,13 +94,7 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
         modelRow.spacing = 8
         modelRow.translatesAutoresizingMaskIntoConstraints = false
 
-        let taskRow = NSStackView(views: [taskLabel, taskValueLabel])
-        taskRow.orientation = .horizontal
-        taskRow.alignment = .centerY
-        taskRow.distribution = .equalSpacing
-        taskRow.translatesAutoresizingMaskIntoConstraints = false
-
-        let rows = NSStackView(views: [modelRow, speedLabel, taskRow])
+        let rows = NSStackView(views: [modelRow, averageLabel, taskLineLabel])
         rows.orientation = .vertical
         rows.alignment = .leading
         rows.distribution = .fill
@@ -115,22 +108,17 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
         modelLabel.maximumNumberOfLines = 1
         modelLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        speedLabel.font = .monospacedSystemFont(ofSize: 11.5, weight: .medium)
-        speedLabel.textColor = .secondaryLabelColor
-        speedLabel.lineBreakMode = .byTruncatingTail
-        speedLabel.maximumNumberOfLines = 1
-        speedLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        averageLabel.font = .monospacedDigitSystemFont(ofSize: 11.5, weight: .medium)
+        averageLabel.textColor = .secondaryLabelColor
+        averageLabel.lineBreakMode = .byTruncatingTail
+        averageLabel.maximumNumberOfLines = 1
+        averageLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        taskLabel.font = .systemFont(ofSize: 10.5, weight: .medium)
-        taskLabel.textColor = .secondaryLabelColor
-        taskLabel.setContentHuggingPriority(.required, for: .horizontal)
-
-        taskValueLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
-        taskValueLabel.textColor = .labelColor
-        taskValueLabel.alignment = .right
-        taskValueLabel.lineBreakMode = .byTruncatingTail
-        taskValueLabel.maximumNumberOfLines = 1
-        taskValueLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        taskLineLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        taskLineLabel.textColor = .labelColor
+        taskLineLabel.lineBreakMode = .byTruncatingTail
+        taskLineLabel.maximumNumberOfLines = 1
+        taskLineLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         NSLayoutConstraint.activate([
             rows.leadingAnchor.constraint(equalTo: effectView.leadingAnchor, constant: Self.horizontalInset),
@@ -139,15 +127,15 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
             rows.bottomAnchor.constraint(equalTo: effectView.bottomAnchor, constant: -Self.verticalInset),
             modelRow.widthAnchor.constraint(equalTo: rows.widthAnchor),
             modelRow.heightAnchor.constraint(equalToConstant: 17),
-            speedLabel.widthAnchor.constraint(equalTo: rows.widthAnchor),
-            speedLabel.heightAnchor.constraint(equalToConstant: 16),
-            taskRow.widthAnchor.constraint(equalTo: rows.widthAnchor),
-            taskRow.heightAnchor.constraint(equalToConstant: 17),
+            averageLabel.widthAnchor.constraint(equalTo: rows.widthAnchor),
+            averageLabel.heightAnchor.constraint(equalToConstant: 16),
+            taskLineLabel.widthAnchor.constraint(equalTo: rows.widthAnchor),
+            taskLineLabel.heightAnchor.constraint(equalToConstant: 17),
             statusDot.widthAnchor.constraint(equalToConstant: 7),
             statusDot.heightAnchor.constraint(equalToConstant: 7),
         ])
 
-        configureContextMenu(for: [effectView, modelRow, statusDot, modelLabel, speedLabel, taskRow, taskLabel, taskValueLabel])
+        configureContextMenu(for: [effectView, modelRow, statusDot, modelLabel, averageLabel, taskLineLabel])
     }
 
     private func configureContextMenu(for views: [NSView]) {
@@ -202,13 +190,6 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
         }
     }
 
-    private static func secondaryLine(for status: HUDPresentationState, speedText: String) -> String {
-        switch status {
-        case .runningCommand: "RUNNING COMMAND"
-        case .runningTool: "RUNNING TOOL"
-        default: speedText.isEmpty ? "— tok/s" : speedText
-        }
-    }
 }
 
 @MainActor
