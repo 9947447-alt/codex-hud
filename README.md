@@ -2,7 +2,7 @@
 
 A lightweight real-time Codex token HUD for macOS.
 
-CodexHUD 是一个 macOS 原生悬浮 HUD，用于旁观 Codex Desktop 当前任务的 Token 用量、可见文本输出速度和运行状态。它是独立项目，并非 OpenAI 官方产品。
+CodexHUD 是一个 macOS 原生悬浮 HUD，用于旁观 Codex Desktop 当前任务的 Token 用量、已结算输出平均吞吐和运行状态。它是独立项目，并非 OpenAI 官方产品。
 
 ## Features
 

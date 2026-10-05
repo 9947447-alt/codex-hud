@@ -317,8 +317,15 @@ enum UsageHighWater {
                 responses[record.responseID] = incoming
             }
         case let .priceable(existing):
-            if case let .priceable(response) = incoming, response.totalTokens >= existing.totalTokens {
+            switch incoming {
+            case let .priceable(response) where response.totalTokens >= existing.totalTokens:
                 responses[record.responseID] = incoming
+            case .unpriceable:
+                responses[record.responseID] = .unpriceable
+            case nil where record.totalTokens > existing.totalTokens:
+                responses[record.responseID] = .unpriceable
+            default:
+                break
             }
         }
     }
@@ -616,6 +623,7 @@ public struct TurnUsageSnapshot: Equatable, Sendable {
     public fileprivate(set) var responses: [String: ResponseUsageState] = [:]
     public fileprivate(set) var status: TurnStatus = .idle
     public fileprivate(set) var model: String?
+    public fileprivate(set) var modelConflict = false
     public fileprivate(set) var effort: String?
 }
 
@@ -640,12 +648,20 @@ public struct TurnUsageTracker: Sendable {
                 responses: [:],
                 status: .active,
                 model: nil,
+                modelConflict: false,
                 effort: nil
             )
 
         case let .turnContext(turnID, model, effort):
             guard snapshot.turnID == turnID else { return }
-            snapshot.model = model ?? snapshot.model
+            if let model, !snapshot.modelConflict {
+                if let existing = snapshot.model, existing != model {
+                    snapshot.model = nil
+                    snapshot.modelConflict = true
+                } else {
+                    snapshot.model = model
+                }
+            }
             snapshot.effort = effort ?? snapshot.effort
 
         case let .taskCompleted(turnID):

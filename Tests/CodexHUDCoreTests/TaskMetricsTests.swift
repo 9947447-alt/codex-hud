@@ -548,6 +548,94 @@ final class TaskMetricsTests: XCTestCase {
         XCTAssertEqual(TaskMetricLineFormatter.task(totalTokens: reset.totalTokens, apiEquivalentUSD: nil), "TASK  0 · API≈—")
     }
 
+    func testLaterUnpriceableResponseInvalidatesPreviousPrice() {
+        let started = 1_700_000_000_000
+        var tracker = TurnUsageTracker()
+        tracker.consume(.taskStarted(turnID: "turn-a", startedAtMilliseconds: started))
+        tracker.consume(.turnContext(turnID: "turn-a", model: "gpt-6.1-sol", effort: "high"))
+        tracker.consume(.usage(record(
+            thread: "parent",
+            turn: "turn-a",
+            response: "r1",
+            input: 100,
+            output: 20,
+            settledAt: started + 1_000
+        )))
+        let priced = CurrentTaskAccountant.metrics(
+            startedAtMilliseconds: started,
+            parent: tracker.snapshot,
+            child: emptyChildren()
+        )
+        XCTAssertNotNil(priced.apiEquivalentUSD)
+
+        tracker.consume(.usage(TokenUsageRecord(
+            threadID: "parent",
+            turnID: "turn-a",
+            responseID: "r1",
+            totalTokens: 180,
+            turnUsage: TokenUsageComponents(
+                inputTokens: 140,
+                cachedInputTokens: 0,
+                cacheWriteInputTokens: 0,
+                outputTokens: 40,
+                reasoningOutputTokens: 0,
+                totalTokens: 180
+            ),
+            responseUsage: TokenUsageComponents(
+                inputTokens: 40,
+                cachedInputTokens: 30,
+                cacheWriteInputTokens: 20,
+                outputTokens: 20,
+                reasoningOutputTokens: 0,
+                totalTokens: 60
+            ),
+            settledAtMilliseconds: started + 2_000
+        )))
+        let invalidated = CurrentTaskAccountant.metrics(
+            startedAtMilliseconds: started,
+            parent: tracker.snapshot,
+            child: emptyChildren()
+        )
+        XCTAssertEqual(invalidated.totalTokens, 180)
+        XCTAssertNil(invalidated.apiEquivalentUSD)
+        XCTAssertNotEqual(invalidated.apiEquivalentUSD, priced.apiEquivalentUSD)
+    }
+
+    func testParentModelChangeFailsClosedInsteadOfRepricing() throws {
+        let started = 1_700_000_000_000
+        var tracker = TurnUsageTracker()
+        tracker.consume(.taskStarted(turnID: "turn-a", startedAtMilliseconds: started))
+        tracker.consume(.turnContext(turnID: "turn-a", model: "gpt-6.1-sol", effort: "high"))
+        let usage = record(
+            thread: "parent",
+            turn: "turn-a",
+            response: "r1",
+            input: 1_000,
+            output: 100,
+            settledAt: started + 1_000
+        )
+        tracker.consume(.usage(usage))
+        let sol = CurrentTaskAccountant.metrics(
+            startedAtMilliseconds: started,
+            parent: tracker.snapshot,
+            child: emptyChildren()
+        )
+        tracker.consume(.turnContext(turnID: "turn-a", model: "gpt-6-luna", effort: "low"))
+        tracker.consume(.turnContext(turnID: "turn-a", model: "gpt-6.1-sol", effort: "high"))
+        let conflicted = CurrentTaskAccountant.metrics(
+            startedAtMilliseconds: started,
+            parent: tracker.snapshot,
+            child: emptyChildren()
+        )
+        let luna = try XCTUnwrap(APIListPriceCatalog.cost(modelID: "gpt-6-luna", usage: usage.responseUsage!))
+        XCTAssertNotNil(sol.apiEquivalentUSD)
+        XCTAssertTrue(tracker.snapshot.modelConflict)
+        XCTAssertNil(tracker.snapshot.model)
+        XCTAssertNil(conflicted.apiEquivalentUSD)
+        XCTAssertNotEqual(conflicted.apiEquivalentUSD, luna)
+        XCTAssertEqual(conflicted.totalTokens, sol.totalTokens)
+    }
+
     func testDecodedTaskStartAndUsageTimestampBoundaries() throws {
         let started = try XCTUnwrap(RolloutLineDecoder.decode(
             #"{"timestamp":"2026-10-05T00:00:00.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-a","started_at":1791158400}}"#

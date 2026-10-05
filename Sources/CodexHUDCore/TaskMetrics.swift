@@ -58,7 +58,7 @@ public enum CurrentTaskAccountant {
             totalTokens: totalOverflow ? Int.max : total,
             averageOutputTokensPerSecond: average,
             apiEquivalentUSD: APIEquivalentCost.total(
-                parentModelID: parent.model,
+                parentModelID: parent.modelConflict ? nil : parent.model,
                 parentResponses: parent.responses,
                 childRequests: child.requests
             )
